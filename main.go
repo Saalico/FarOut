@@ -12,13 +12,30 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
 
-const (
-	screenWidth  = 320
-	screenHeight = 240
-	maxAngle     = 360
-)
+type window struct {
+	w int
+	h int
+}
+
+var w window
 
 type Direction int
+
+func getFacing(v vector) int {
+	var d int
+	if v.dx > 0 && v.dy == 0 {
+		d = int(Right)
+	} else if v.dx < 0 && v.dy == 0 {
+		d = int(Left)
+	} else if v.dy < 0 && v.dx == 0 {
+		d = int(Up)
+	} else if v.dy > 0 && v.dx == 0 {
+		d = int(Down)
+	} else {
+		return -1
+	}
+	return d
+}
 
 func castArray[A any](l map[int]int, s []A) []A {
 	var b = make([]A, len(s))
@@ -28,6 +45,27 @@ func castArray[A any](l map[int]int, s []A) []A {
 		fmt.Println(l[i])
 	}
 	return b
+}
+
+func buildSpriteAtlas(rows, columns int, sprite spritesheet) atlas {
+	img, _, err := image.Decode(bytes.NewReader(sprite))
+	if err != nil {
+		log.Fatal(err)
+	}
+	origEbitenImage := ebiten.NewImageFromImage(img)
+	imgs := make([]animation, rows)
+	for i := range imgs {
+		imgs[i] = make(animation, columns)
+		for j := range imgs[i] {
+			spriteWidth := origEbitenImage.Bounds().Dx() / columns
+			spriteHeight := origEbitenImage.Bounds().Dy() / rows
+			offsetX := j * spriteWidth
+			offsetY := i * spriteHeight
+			imgs[i][j] = origEbitenImage.SubImage(
+				image.Rect(offsetX, offsetY, offsetX+spriteWidth, offsetY+spriteHeight)).(*ebiten.Image)
+		}
+	}
+	return castArray(map[int]int{0: 2, 1: 0, 2: 3, 3: 1}, imgs)
 }
 
 const (
@@ -43,12 +81,12 @@ type coordinates struct {
 	x, y float64
 }
 
-type dimensions struct {
-	w, h float64
-}
-
 type vector struct {
 	dx, dy float64
+}
+
+type dimensions struct {
+	w, h float64
 }
 
 var (
@@ -80,38 +118,6 @@ type action struct {
 	frames   animation
 	canStop  bool
 	velocity vector
-}
-
-type Game struct {
-	Characters       []Character
-	players          map[string]Player
-	needUpdate       bool
-	primedCharacters []*Character
-	speed            int
-	count            int
-	inited           bool
-}
-
-func buildSpriteAtlas(rows, columns int, sprite spritesheet) atlas {
-	img, _, err := image.Decode(bytes.NewReader(sprite))
-	if err != nil {
-		log.Fatal(err)
-	}
-	origEbitenImage := ebiten.NewImageFromImage(img)
-	imgs := make([]animation, rows)
-	for i := range imgs {
-		imgs[i] = make(animation, columns)
-		for j := range imgs[i] {
-			spriteWidth := origEbitenImage.Bounds().Dx() / columns
-			spriteHeight := origEbitenImage.Bounds().Dy() / rows
-			offsetX := j * spriteWidth
-			offsetY := i * spriteHeight
-			imgs[i][j] = origEbitenImage.SubImage(
-				image.Rect(offsetX, offsetY, offsetX+spriteWidth, offsetY+spriteHeight)).(*ebiten.Image)
-
-		}
-	}
-	return castArray(map[int]int{0: 2, 1: 0, 2: 3, 3: 1}, imgs)
 }
 
 type Character struct {
@@ -153,6 +159,7 @@ func initChar(name string, health, stamina int, size dimensions, atlas atlas) Ch
 	c.status.dimensions.w, c.status.dimensions.h = size.w, size.h
 	c.status.coordinates = coordinates{0, 0}
 
+	//TODO Change vector allow function that refers to global game speed.
 	var vectors = []vector{{0, -2.5}, {2.5, 0}, {0, 2.5}, {-2.5, 0}}
 	for i := range Directions {
 		c.initAction("idle"+Directions[i], c.atlas[i], 0, 2)
@@ -163,6 +170,8 @@ func initChar(name string, health, stamina int, size dimensions, atlas atlas) Ch
 
 	}
 	c.status.primedAction = c.actions["idleDown"]
+	c.op = ebiten.DrawImageOptions{}
+	c.op.GeoM.Scale(2.5, 2.5)
 	return c
 
 }
@@ -174,64 +183,6 @@ func (c *Character) initAction(name string, frames animation, actionStart, actio
 		true,
 		vector{},
 	})
-}
-
-func getFacing(v vector) int {
-	var d int
-	if v.dx > 0 && v.dy == 0 {
-		d = int(Right)
-	} else if v.dx < 0 && v.dy == 0 {
-		d = int(Left)
-	} else if v.dy < 0 && v.dx == 0 {
-		d = int(Up)
-	} else if v.dy > 0 && v.dx == 0 {
-		d = int(Down)
-	} else {
-		return -1
-	}
-	return d
-}
-
-type Player struct {
-	playerID          uint8
-	selectedCharacter *Character
-	keyMap            map[ebiten.Key]string
-}
-
-func (p *Player) getInput() error {
-	c := p.selectedCharacter
-	keys := make([]ebiten.Key, 0)
-	keys = inpututil.AppendPressedKeys(keys)
-	if len(keys) < 1 {
-		c.status.primedAction = c.actions["idle"+Directions[c.status.facing]]
-		fmt.Println("idle" + Directions[c.status.facing])
-		return nil
-	}
-	_, ok := p.keyMap[keys[len(keys)-1]]
-	if ok && p.selectedCharacter.primedAction.canStop {
-		c.status.primedAction = c.actions[p.keyMap[keys[len(keys)-1]]]
-		return nil
-	}
-	return nil
-}
-
-func (g *Game) init() {
-	defer func() {
-		g.inited = true
-	}()
-	g.speed = 1
-
-	//init all player entities
-	benj := initChar("Benj", 100, 100, dimensions{16, 16}, buildSpriteAtlas(4, 4, images.BasicCharacterSpritesheet_png))
-
-	g.players = make(map[string]Player)
-
-	var p1 Player
-	p1.playerID = 1
-	p1.selectedCharacter = &benj
-	p1.keyMap = defaultKeyMap
-	g.players["p1"] = p1
-	g.primedCharacters = make([]*Character, 0)
 }
 
 func (c *Character) primeAction(a *action) error {
@@ -259,12 +210,128 @@ func (c *Character) setFacing() {
 	fmt.Println(c.status.facing)
 }
 
+type Player struct {
+	playerID          uint8
+	selectedCharacter *Character
+	keyMap            map[ebiten.Key]string
+	camOp             cameraOptions
+}
+
+func (p *Player) getInput() error {
+	c := p.selectedCharacter
+	keys := make([]ebiten.Key, 0)
+	keys = inpututil.AppendPressedKeys(keys)
+	if len(keys) < 1 {
+		c.status.primedAction = c.actions["idle"+Directions[c.status.facing]]
+		fmt.Println("idle" + Directions[c.status.facing])
+		return nil
+	}
+	_, ok := p.keyMap[keys[len(keys)-1]]
+	if ok && p.selectedCharacter.primedAction.canStop {
+		c.status.primedAction = c.actions[p.keyMap[keys[len(keys)-1]]]
+		return nil
+	}
+	return nil
+}
+
+type control struct {
+	dimensions
+	coordinates
+	effect func()
+}
+type controls []*control
+
+var Controls controls
+
+func initCamPanControls() {
+	for i := range Directions {
+		var c control
+		wW, wH := ebiten.WindowSize()
+		dir := Directions[i]
+		switch dir {
+		case "Up":
+			c.dimensions.w = float64(wW)
+			c.dimensions.h = float64(wH / 10)
+		case "Right":
+
+		case "Down":
+
+		case "Left":
+
+		}
+	}
+
+}
+
+func initUI() {
+}
+
+type Camera struct {
+	player    *Player
+	character *Character
+	dimensions
+	coordinates
+	offset vector
+	zoom   float32
+}
+
+type cameraOptions struct {
+	tetherRange int
+	zoom        float32
+	locked      bool
+}
+
+func (c *Camera) getOffset() (float64, float64) {
+	return c.offset.dx, c.offset.dy
+}
+
+func (c *Camera) snapToSelectedCharacter() {
+	if c.player.selectedCharacter != c.character {
+		c.character = c.player.selectedCharacter
+		c.coordinates = c.player.selectedCharacter.coordinates
+	}
+}
+
+type World struct {
+	Camera
+}
+type Game struct {
+	Characters       []Character
+	players          map[string]Player
+	primedCharacters []*Character
+	speed            int
+	count            int
+	inited           bool
+}
+
+func (g *Game) init() {
+	defer func() {
+		g.inited = true
+	}()
+	g.speed = 1
+
+	//init all player entities
+	benj := initChar("Benj", 100, 100, medium, buildSpriteAtlas(4, 4, images.BasicCharacterSpritesheet_png))
+
+	g.players = make(map[string]Player)
+
+	var p1 Player
+	p1.playerID = 1
+	p1.selectedCharacter = &benj
+	p1.keyMap = defaultKeyMap
+	g.players["p1"] = p1
+	g.primedCharacters = make([]*Character, 0)
+}
+
 func (g *Game) Update() error {
 	if !g.inited {
 		g.init()
 	}
 
+	// Poll game buffer for player characters that are taking an action
+	// In reality this is just going to get the last player input for their selected Character
 	g.primedCharacters = g.primedCharacters[:0]
+
 	for _, p := range g.players {
 		p.getInput()
 		if p.selectedCharacter.status.primedAction != nil {
@@ -310,11 +377,13 @@ func (g *Game) Draw(screen *ebiten.Image) {
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	return screenWidth, screenHeight
+	w, h := ebiten.ScreenSizeInFullscreen()
+	ebiten.SetFullscreen(true)
+	ebiten.SetWindowSize(w, h)
+	return w, h
 }
 
 func main() {
-	ebiten.SetWindowSize(screenWidth*2, screenHeight*2)
 	ebiten.SetWindowTitle("Sprites (Ebitengine Demo)")
 	if err := ebiten.RunGame(&Game{}); err != nil {
 		log.Fatal(err)

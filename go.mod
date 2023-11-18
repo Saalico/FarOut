@@ -1,13 +1,15 @@
-module src/saalico/haze
+module src/saalico/FarOut
 
 go 1.21.1
 
 require (
+	github.com/alecthomas/chroma v0.10.0
 	github.com/hajimehoshi/ebiten/v2 v2.6.2
 	src/assets v0.0.0-00010101000000-000000000000
 )
 
 require (
+	github.com/dlclark/regexp2 v1.4.0 // indirect
 	github.com/ebitengine/purego v0.5.0 // indirect
 	github.com/jezek/xgb v1.1.0 // indirect
 	golang.org/x/exp/shiny v0.0.0-20230817173708-d852ddb80c63 // indirect
